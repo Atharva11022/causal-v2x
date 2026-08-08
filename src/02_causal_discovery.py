@@ -15,6 +15,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 from causallearn.search.ConstraintBased.PC import pc
 import os
+import time
 
 os.makedirs("outputs", exist_ok=True)
 
@@ -52,12 +53,18 @@ def graph_to_nx(cg, col_names):
     return G
 
 print("Running PC on ego-only features ...")
+t0 = time.time()
 cg_ego, cols_ego = run_pc(ego_df)
+time_pc_ego = time.time() - t0
 G_ego = graph_to_nx(cg_ego, cols_ego)
 
 print("Running PC on ego+V2X-proxy features ...")
+t0 = time.time()
 cg_v2x, cols_v2x = run_pc(v2x_df)
+time_pc_v2x = time.time() - t0
 G_v2x = graph_to_nx(cg_v2x, cols_v2x)
+
+print(f"\nPC runtime — ego-only: {time_pc_ego:.3f}s, ego+V2X-proxy: {time_pc_v2x:.3f}s")
 
 # ------------------------------------------------------------
 # COMPARE

@@ -1,0 +1,2 @@
+device,python_version,torch_version,platform,causal_masked_train_time_sec,baseline_train_time_sec,causal_masked_inference_latency_ms,baseline_inference_latency_ms,epochs,random_seed
+mps,3.14.4,2.13.0,macOS-26.5.2-arm64-arm-64bit-Mach-O,0.9674670696258545,0.5183501243591309,0.13695001602172852,0.12325763702392578,300,42

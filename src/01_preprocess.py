@@ -12,11 +12,19 @@ import pandas as pd
 import numpy as np
 import os
 
-RAW_PATH = "data/ngsim_us101.csv"   # <-- update to your actual downloaded filename
+RAW_PATH = "data/trajectories-0750am-0805am.txt"   # <-- your actual downloaded file
 OUT_DIR = "data"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 MAX_ROWS = 300_000   # keep this modest so everything stays fast on 8GB RAM
+
+# Official NGSIM column order (the raw .txt has NO header row)
+NGSIM_COLUMNS = [
+    "Vehicle_ID", "Frame_ID", "Total_Frames", "Global_Time",
+    "Local_X", "Local_Y", "Global_X", "Global_Y",
+    "v_Length", "v_Width", "v_Class", "v_Vel", "v_Acc",
+    "Lane_ID", "Preceding", "Following", "Space_Headway", "Time_Headway",
+]
 
 # ------------------------------------------------------------
 # 1. LOAD
@@ -24,8 +32,15 @@ MAX_ROWS = 300_000   # keep this modest so everything stays fast on 8GB RAM
 
 def load_ngsim(path, max_rows=MAX_ROWS):
     print(f"Loading {path} ...")
-    df = pd.read_csv(path)
+    df = pd.read_csv(
+        path,
+        sep=r"\s+",          # whitespace-delimited, not comma
+        header=None,
+        names=NGSIM_COLUMNS,
+        engine="python",
+    )
     print(f"  raw rows: {len(df):,}")
+    print(f"  unique vehicles: {df['Vehicle_ID'].nunique():,}")
     df = df.sort_values(["Vehicle_ID", "Frame_ID"]).head(max_rows).copy()
     print(f"  using rows: {len(df):,}  (subset for speed/memory)")
     return df
@@ -70,12 +85,15 @@ def build_v2x_features(df):
 # 4. NEAR-MISS EVENT EXTRACTION (frame-level snapshots, for the CVAE)
 # ------------------------------------------------------------
 
-def extract_near_miss_events(df, ttc_threshold=2.0, hard_decel=-3.0):
+def extract_near_miss_events(df, ttc_threshold=3.0, hard_decel_ft=-10.0):
     """
-    Flags frames where the ego vehicle is in a near-miss state
-    (short time-headway to leader, or hard braking), and pulls a
-    snapshot feature vector at that moment: ego reaction features
-    (target) + leader/context features (V2X-proxy condition).
+    Flags frames where the ego vehicle is in a genuine near-miss state,
+    using TRUE time-to-collision (based on closing speed, not simple
+    time-headway) and a properly-scaled hard-braking threshold.
+
+    NOTE: NGSIM units are feet / feet-per-second / feet-per-second^2,
+    NOT meters. hard_decel_ft=-10.0 ft/s^2 ~= -3.05 m/s^2, a genuinely
+    hard braking event (roughly 0.3g), not routine deceleration.
     """
     lead = df[["Vehicle_ID", "Frame_ID", "v_Vel", "v_Acc"]].rename(
         columns={"Vehicle_ID": "Preceding", "v_Vel": "lead_vel", "v_Acc": "lead_acc"}
@@ -83,9 +101,20 @@ def extract_near_miss_events(df, ttc_threshold=2.0, hard_decel=-3.0):
     merged = df.merge(lead, on=["Preceding", "Frame_ID"], how="left")
 
     merged["rel_speed_to_lead"] = merged["v_Vel"] - merged["lead_vel"]
+
+    # True TTC: only defined (and meaningful) when the ego vehicle is
+    # actually CLOSING the gap (positive relative speed). Otherwise the
+    # gap is stable or growing -> not a collision course -> TTC = infinity.
+    closing = merged["rel_speed_to_lead"] > 1.0  # ft/s, ignore noise near zero
+    merged["ttc"] = np.where(
+        closing,
+        merged["Space_Headway"] / merged["rel_speed_to_lead"].clip(lower=1e-3),
+        np.inf,
+    )
+
     merged["near_miss"] = (
-        merged["Time_Headway"].between(0.01, ttc_threshold) |
-        (merged["v_Acc"] < hard_decel)
+        (merged["ttc"] < ttc_threshold) |
+        (merged["v_Acc"] < hard_decel_ft)
     )
 
     events = merged[merged["near_miss"]].copy()
@@ -94,10 +123,11 @@ def extract_near_miss_events(df, ttc_threshold=2.0, hard_decel=-3.0):
         "Vehicle_ID", "Frame_ID",
         "v_Acc", "v_Vel",                      # target/reaction features
         "lead_vel", "lead_acc",                # context/V2X-proxy features
-        "Space_Headway", "Time_Headway", "rel_speed_to_lead",
-    ]].dropna()
+        "Space_Headway", "Time_Headway", "rel_speed_to_lead", "ttc",
+    ]].dropna(subset=["v_Acc", "v_Vel", "lead_vel", "lead_acc", "Space_Headway", "Time_Headway"])
 
-    print(f"  near-miss events extracted: {len(events):,}")
+    print(f"  near-miss events extracted: {len(events):,}  "
+          f"({100*len(events)/len(merged):.1f}% of frames)")
     return events
 
 # ------------------------------------------------------------

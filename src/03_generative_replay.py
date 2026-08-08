@@ -18,6 +18,8 @@ import torch.nn as nn
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 import os
+import time
+import platform
 
 os.makedirs("outputs", exist_ok=True)
 torch.manual_seed(42)
@@ -25,6 +27,8 @@ np.random.seed(42)
 
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
 print(f"Using device: {DEVICE}")
+print(f"Platform: {platform.platform()}, Python: {platform.python_version()}, "
+      f"PyTorch: {torch.__version__}")
 
 # ------------------------------------------------------------
 # 1. LOAD DATA
@@ -162,6 +166,9 @@ def train_model(causal_mask, tag, epochs=300, lr=1e-3):
     model = CVAE(X_DIM, C_DIM, LATENT_DIM, HIDDEN_DIM, causal_mask=causal_mask).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
 
+    n_params = sum(p.numel() for p in model.parameters())
+    train_start = time.time()
+
     for epoch in range(epochs):
         model.train()
         opt.zero_grad()
@@ -177,14 +184,18 @@ def train_model(causal_mask, tag, epochs=300, lr=1e-3):
                 val_loss, val_recon, _ = vae_loss(xv_hat, X_val_t, muv, logvarv)
             print(f"[{tag}] epoch {epoch:4d}  train_recon={recon.item():.4f}  val_recon={val_recon.item():.4f}")
 
+    train_time = time.time() - train_start
+    print(f"[{tag}] training time: {train_time:.2f}s for {epochs} epochs "
+          f"({n_params} trainable params, device={DEVICE})")
+
     torch.save(model.state_dict(), f"outputs/cvae_{tag}.pt")
-    return model
+    return model, train_time
 
 print("\nTraining CAUSAL-MASKED CVAE ...")
-model_masked = train_model(causal_mask=mask_t, tag="causal_masked")
+model_masked, time_masked = train_model(causal_mask=mask_t, tag="causal_masked")
 
 print("\nTraining UNCONSTRAINED baseline CVAE ...")
-model_baseline = train_model(causal_mask=None, tag="baseline")
+model_baseline, time_baseline = train_model(causal_mask=None, tag="baseline")
 
 # ------------------------------------------------------------
 # 5. GENERATE SAMPLES (for Phase 6 evaluation)
@@ -198,8 +209,35 @@ def generate(model, C_context, n_samples_per_context=5):
         x_gen = model.decode(z, C_rep)
     return x_gen.cpu().numpy(), C_rep.cpu().numpy()
 
+def measure_inference_latency(model, C_context, n_trials=100):
+    """Single-scenario generation latency, for real-time deployment context."""
+    model.eval()
+    single_c = C_context[:1]
+    # warmup (first call includes lazy init overhead, not representative)
+    with torch.no_grad():
+        z = torch.randn(1, LATENT_DIM, device=DEVICE)
+        _ = model.decode(z, single_c)
+    if DEVICE == "mps":
+        torch.mps.synchronize()
+
+    start = time.time()
+    with torch.no_grad():
+        for _ in range(n_trials):
+            z = torch.randn(1, LATENT_DIM, device=DEVICE)
+            _ = model.decode(z, single_c)
+    if DEVICE == "mps":
+        torch.mps.synchronize()
+    elapsed = time.time() - start
+    return (elapsed / n_trials) * 1000  # ms per single-scenario generation
+
 gen_masked, ctx_masked = generate(model_masked, C_val_t)
 gen_baseline, ctx_baseline = generate(model_baseline, C_val_t)
+
+latency_masked_ms = measure_inference_latency(model_masked, C_val_t)
+latency_baseline_ms = measure_inference_latency(model_baseline, C_val_t)
+print(f"\nInference latency (single scenario, mean of 100 runs, device={DEVICE}):")
+print(f"  causal_masked: {latency_masked_ms:.4f} ms")
+print(f"  baseline:      {latency_baseline_ms:.4f} ms")
 
 np.save("outputs/gen_masked_X.npy", x_scaler.inverse_transform(gen_masked))
 np.save("outputs/gen_baseline_X.npy", x_scaler.inverse_transform(gen_baseline))
@@ -207,6 +245,21 @@ np.save("outputs/gen_context.npy", c_scaler.inverse_transform(ctx_masked))
 np.save("outputs/real_val_X.npy", x_scaler.inverse_transform(X_val))
 np.save("outputs/real_val_C.npy", c_scaler.inverse_transform(C_val))
 np.save("outputs/causal_mask.npy", mask)
+
+perf = pd.DataFrame([{
+    "device": DEVICE,
+    "python_version": platform.python_version(),
+    "torch_version": torch.__version__,
+    "platform": platform.platform(),
+    "causal_masked_train_time_sec": time_masked,
+    "baseline_train_time_sec": time_baseline,
+    "causal_masked_inference_latency_ms": latency_masked_ms,
+    "baseline_inference_latency_ms": latency_baseline_ms,
+    "epochs": 300,
+    "random_seed": 42,
+}])
+perf.to_csv("outputs/performance_metrics.csv", index=False)
+print("Saved: outputs/performance_metrics.csv")
 
 print("\nSaved generated samples and models to outputs/")
 print("Phase 5 complete.")
