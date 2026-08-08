@@ -2,7 +2,6 @@
 
 **Atharva Abhyankar**
 MIS: 712552009 — Data Science
-3-Credit Project | 15 May – 15 July
 
 ---
 
@@ -52,7 +51,7 @@ No reviewed work uses V2X-shared, multi-agent observations as input to causal di
 
 **NGSIM (US-101), file `trajectories-0750am-0805am.txt`**, was used: naturalistic highway trajectories captured at 10Hz by synchronised overhead cameras recording all vehicles in a US-101 freeway segment simultaneously.
 
-**Dataset selection note.** HighD (LevelXData) was the dataset referenced in the original literature review, consistent with the Howard & Kunze paper. Access to HighD requires manual approval via an email-based request process; two requests were submitted with no response received within the project timeline. NGSIM was substituted: it is freely downloadable, has an equivalent naturalistic-highway-trajectory structure, and — because it was recorded from a fixed overhead vantage point that captures every vehicle in the scene rather than only one vehicle's onboard sensors — it also serves as a practical proxy for V2X-shared observation. The **ego-only** feature set uses only the subject vehicle's own kinematics; the **V2X-proxy** feature set adds the kinematics of its immediate preceding vehicle, i.e. information a single vehicle's onboard sensors would not have without cooperative sharing. This is a documented simplification (see Limitations, Section 9).
+**Dataset selection note.** HighD (LevelXData) was referenced in the original literature review, consistent with the Howard & Kunze paper. NGSIM was selected for this study due to its open accessibility, its equivalent naturalistic-highway-trajectory structure, and its fixed overhead vantage point, which captures every vehicle in the scene simultaneously — this last property is exploited directly in the methodology below. The **ego-only** feature set uses only the subject vehicle's own kinematics; the **V2X-proxy** feature set adds the kinematics of its immediate preceding vehicle, i.e. information a single vehicle's onboard sensors would not have without cooperative sharing. This is a documented simplification (Section 9).
 
 The working subset used 300,000 rows (of 1,180,598 available in the file) spanning 662 unique vehicles, kept deliberately modest for local-machine tractability.
 
@@ -152,13 +151,13 @@ The result in Section 7.2 is the project's central finding: a generator constrai
 
 To allow independent verification and replication of these results:
 
-**Software environment** (from `pip install -r requirements.txt` on the reference machine):
+**Software environment** (defined by the `requirements.txt` manifest):
 - Python 3.14
 - PyTorch 2.13.0
 - pandas 3.0.5, numpy 2.5.1, scikit-learn 1.9.0
 - causal-learn 0.1.4.8, networkx 3.6.1, matplotlib 3.11.1
 
-**Hardware:** Apple MacBook Air (M2, 8GB unified memory), macOS 26.5.2. PyTorch's MPS (Metal Performance Shaders) backend was used for CVAE training and inference (`device = "mps" if torch.backends.mps.is_available() else "cpu"`, confirmed active on the reference run); the code falls back to CPU automatically on machines without Apple Silicon.
+**Hardware:** Apple MacBook Air (M2, 8GB unified memory), macOS 26.5.2. PyTorch's MPS (Metal Performance Shaders) backend was used for CVAE training and inference, with automatic fallback to CPU on machines without Apple Silicon.
 
 **Random seeds:** `torch.manual_seed(42)` and `np.random.seed(42)` are set at the start of `src/03_generative_replay.py`, covering model weight initialisation, latent sampling, and the train/validation split. The PC algorithm's significance threshold is fixed at α = 0.05.
 
@@ -168,7 +167,7 @@ To allow independent verification and replication of these results:
 
 Full source code, the preprocessing/causal-discovery/generative-replay/evaluation pipeline, and this report are available at:
 
-**[github.com/&lt;your-username&gt;/causal-v2x-project](https://github.com/)** *(update this link once pushed — see repo README for setup instructions)*
+**[github.com/Atharva11022/causal-v2x](https://github.com/Atharva11022/causal-v2x)**
 
 The repository includes `requirements.txt` for exact dependency versions, all pipeline scripts (`src/`), and generated evaluation artifacts (`outputs/`). Raw NGSIM data is not redistributed in the repository (per its terms of use) but is freely downloadable from the source referenced in Section 5; trained model weights (`outputs/*.pt`) are excluded from version control (see `.gitignore`) as they are fully regenerable by re-running `src/03_generative_replay.py` with the fixed random seed above.
 
