@@ -177,14 +177,31 @@ This project demonstrated, on real naturalistic driving data, that multi-agent (
 
 ## References
 
-1. Howard, J. & Kunze, L. *Counterfactual Causal Discovery on Real-World Driver Behaviour.* Oxford Robotics Institute, IEEE ITSC.
-2. Chang, et al. *Spatial-Temporal Perception with Causal Inference for Naturalistic Driving Action Recognition.* Nanjing University of Science & Technology; Xi'an Jiaotong-Liverpool University.
-3. Zimmer, W. et al. *TUMTraf V2X Cooperative Perception Dataset.* Technical University of Munich, CVPR.
-4. Ren, et al. *Interruption-Aware Cooperative Perception for V2X-Aided Driving.* Shanghai Jiao Tong University.
-5. Onsu, et al. *Spatiotemporal Semantic V2X Framework for Cooperative Collision Prediction.* University of Ottawa.
-6. Ding, et al. *CMTS: Conditional Multiple Trajectory Synthesizer.* Carnegie Mellon University.
-7. Pronovost, et al.; Xu, et al.; Chang, et al. *Scenario Diffusion / DiffScene / Safe-Sim.*
-8. Ding, et al. *CausalAF: Causal Autoregressive Flow for Scenario Generation.*
+**Causal discovery in driving behaviour**
+
+1. Howard, R. P. M., & Kunze, L. (2023). Simulation-based counterfactual causal discovery on real world driver behaviour. In *2023 IEEE 26th International Conference on Intelligent Transportation Systems (ITSC)*. IEEE.
+2. Chang, Q., Dai, W., Shuai, Z., Yu, L., & Yue, Y. (2025). Spatial-temporal perception with causal inference for naturalistic driving action recognition. *arXiv preprint arXiv:2503.04078*.
+3. Spirtes, P., & Glymour, C. (1991). An algorithm for fast recovery of sparse causal graphs. *Social Science Computer Review*, 9(1), 62–77. *(Origin of the PC algorithm used for causal discovery in this project, Section 6.3.)*
+4. Zheng, Y., Huang, B., Chen, W., Ramsey, J., Gong, M., Cai, R., Shimizu, S., Spirtes, P., & Zhang, K. (2024). Causal-learn: Causal discovery in Python. *Journal of Machine Learning Research*, 25(60), 1–8. *(The `causal-learn` library used to implement PC-algorithm causal discovery in this project.)*
+
+**V2X cooperative perception**
+
+5. Zimmer, W., Wardana, G. A., Sritharan, S., Zhou, X., Song, R., & Knoll, A. C. (2024). TUMTraf V2X cooperative perception dataset. In *Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)* (pp. 22668–22677).
+6. Ren, S., Lei, Z., Wang, Z., Dianati, M., Wang, Y., Chen, S., & Zhang, W. (2024). Interruption-aware cooperative perception for V2X communication-aided autonomous driving. *IEEE Transactions on Intelligent Vehicles*, 9(4), 4698–4714.
+7. Onsu, M. A., Lohan, P., Kantarci, B., Syed, A., Andrews, M., & Kennedy, S. (2026). Spatiotemporal semantic V2X framework for cooperative collision prediction. *arXiv preprint arXiv:2601.17216*.
+
+**Generative replay of near-miss scenarios**
+
+8. Ding, W., Xu, M., & Zhao, D. (2020). CMTS: A conditional multiple trajectory synthesizer for generating safety-critical driving scenarios. In *2020 IEEE International Conference on Robotics and Automation (ICRA)* (pp. 4314–4321).
+9. Pronovost, E., Ganesina, M. R., Hendy, N., Wang, Z., Morales, A., Wang, K., & Roy, N. (2023). Scenario diffusion: Controllable driving scenario generation with diffusion. *Advances in Neural Information Processing Systems*, 36, 68873–68894.
+10. Xu, C., Petiushko, A., Zhao, D., & Li, B. (2025). DiffScene: Diffusion-based safety-critical scenario generation for autonomous vehicles. *Proceedings of the AAAI Conference on Artificial Intelligence*, 39, 8797–8805.
+11. Ding, W., Lin, H., Li, B., & Zhao, D. (2023). CausalAF: Causal autoregressive flow for safety-critical driving scenario generation. In *Proceedings of the 6th Conference on Robot Learning (CoRL)*, PMLR 205 (pp. 812–823).
+12. Sohn, K., Lee, H., & Yan, X. (2015). Learning structured output representation using deep conditional generative models. *Advances in Neural Information Processing Systems*, 28, 3483–3491. *(Foundational CVAE architecture underlying the generative model in Section 6.4.)*
+
+**Surrogate safety measures & data**
+
+13. Minderhoud, M. M., & Bovy, P. H. L. (2001). Extended time-to-collision measures for road traffic safety assessment. *Accident Analysis & Prevention*, 33(1), 89–97. *(Basis for the true-TTC near-miss criterion used in Section 6.2.)*
+14. U.S. Department of Transportation, Federal Highway Administration. (2016). *Next Generation Simulation (NGSIM) Vehicle Trajectories and Supporting Data* [Dataset]. https://data.transportation.gov/
 
 ## Appendix: Reproducing this project
 
