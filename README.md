@@ -21,7 +21,6 @@ Published causal-discovery methods on driving data are typically trained on ego-
 
 **NGSIM (US-101)** — naturalistic highway vehicle trajectories, captured from synchronized overhead cameras that recorded all vehicles in the scene simultaneously. This "all-agents-visible" recording setup is used as a proxy for V2X-shared observation: ego-only features use just the subject vehicle's own kinematics, while the V2X-augmented feature set adds the preceding/neighboring vehicle's kinematics — information a single vehicle wouldn't have without cooperative sharing.
 
-*(HighD was the originally targeted dataset per the project's literature review, but access required manual approval via LevelXData with no response after two requests; NGSIM was substituted as a freely-accessible dataset with equivalent structure.)*
 
 ## Pipeline
 
