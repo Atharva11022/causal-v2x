@@ -7,6 +7,12 @@ A causal-discovery + generative-modeling pipeline that:
 
 > Solo project, 3-credit academic project, built end-to-end (data pipeline → causal discovery → generative modeling → evaluation) on a local machine (Apple M2, 8GB RAM) using PyTorch with MPS acceleration.
 
+## Deliverables
+
+- **[Technical Report](docs/report.md)** — full write-up: literature review, methodology, results, evaluation, reproducibility.
+- **[Presentation Slides](docs/presentation.pptx)** — 10-slide deck covering the project end-to-end, from research gap through results.
+- **[Internship Report (PDF)](docs/Internship_Report.pdf)** — formal academic report, COEP Technological University format.
+
 ## Motivation
 
 Published causal-discovery methods on driving data are typically trained on ego-vehicle-only observations, missing interactions that happen outside a single vehicle's sensor range. Meanwhile, near-miss scenario generators are scored on realism and diversity, not on whether generated agent reactions are actually caused by the agents they're reacting to. This project connects the two: use V2X-style multi-agent context to recover a richer causal graph, then use that graph to constrain what a near-miss generator is allowed to produce.
@@ -45,18 +51,16 @@ python src/04_evaluate.py
 
 ## Results
 
-<!-- Fill in once Phase 4 (causal discovery) and Phase 6 (evaluation) have run -->
-
 **Causal graph comparison:**
 `outputs/causal_graph_comparison.png`
-- Ego-only graph: _N_ edges
-- Ego + V2X-proxy graph: _N_ edges
-- New causal links recovered with V2X context: _N_
+- Ego-only graph: **7** edges
+- Ego + V2X-proxy graph: **18** edges
+- New causal links recovered with V2X context: **12**
 
 **Generative replay evaluation:**
 `outputs/causal_consistency_comparison.png`
-- Causal-masked model consistency gap: _value_
-- Baseline model consistency gap: _value_
+- Causal-masked model consistency gap: **0.4038**
+- Baseline model consistency gap: **0.1297** (~3x lower)
 
 ## Limitations & future work
 
@@ -69,7 +73,7 @@ python src/04_evaluate.py
 ├── src/            pipeline scripts (run in numeric order)
 ├── data/           raw + processed data (gitignored, regenerate via src/01_preprocess.py)
 ├── outputs/        plots, edge lists, evaluation results
-└── docs/           written report and presentation
+└── docs/           report.md, Internship_Report.pdf, presentation.pptx
 ```
 
 ## License
