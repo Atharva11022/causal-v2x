@@ -5,7 +5,7 @@ A causal-discovery + generative-modeling pipeline that:
 2. Quantifies how many causal links are only recoverable once cooperative (V2X-style) observations are available.
 3. Trains a **causal-graph-constrained generative model** to synthesize near-miss driving scenarios, and evaluates it against an unconstrained baseline.
 
-> Solo project, 3-credit academic project, built end-to-end (data pipeline → causal discovery → generative modeling → evaluation) on a local machine (Apple M2, 8GB RAM) using PyTorch with MPS acceleration.
+> Solo, end-to-end applied ML project (data pipeline → causal discovery → generative modeling → evaluation), built on a local machine (Apple M2, 8GB RAM) using PyTorch with MPS acceleration.
 
 ## Deliverables
 
@@ -21,6 +21,7 @@ Published causal-discovery methods on driving data are typically trained on ego-
 
 **NGSIM (US-101)** — naturalistic highway vehicle trajectories, captured from synchronized overhead cameras that recorded all vehicles in the scene simultaneously. This "all-agents-visible" recording setup is used as a proxy for V2X-shared observation: ego-only features use just the subject vehicle's own kinematics, while the V2X-augmented feature set adds the preceding/neighboring vehicle's kinematics — information a single vehicle wouldn't have without cooperative sharing.
 
+*(HighD was the originally targeted dataset per the project's literature review, but access required manual approval via LevelXData with no response after two requests; NGSIM was substituted as a freely-accessible dataset with equivalent structure.)*
 
 ## Pipeline
 
@@ -51,13 +52,17 @@ python src/04_evaluate.py
 ## Results
 
 **Causal graph comparison:**
-`outputs/causal_graph_comparison.png`
+
+![Ego-only vs. ego+V2X-proxy causal graphs](outputs/causal_graph_comparison.png)
+
 - Ego-only graph: **7** edges
 - Ego + V2X-proxy graph: **18** edges
 - New causal links recovered with V2X context: **12**
 
 **Generative replay evaluation:**
-`outputs/causal_consistency_comparison.png`
+
+![Causal consistency: masked generator vs. baseline](outputs/causal_consistency_comparison.png)
+
 - Causal-masked model consistency gap: **0.4038**
 - Baseline model consistency gap: **0.1297** (~3x lower)
 
