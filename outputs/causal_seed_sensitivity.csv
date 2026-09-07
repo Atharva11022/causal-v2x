@@ -1,0 +1,7 @@
+degradation,seed_base,candidate_edges,stable_edges
+clean,42,12,7
+clean,142,11,7
+clean,242,12,8
+dropout_20_delay_1,42,13,7
+dropout_20_delay_1,142,13,8
+dropout_20_delay_1,242,13,6

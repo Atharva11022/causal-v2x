@@ -10,6 +10,9 @@ data/*.zip
 data/*.txt
 data/*.pdf
 data/*.htm
+data/v2x_seq_spd_example*
+data/v2x_seq_tfd_example*
+data/*_extracted/
 
 # Model weights & intermediate arrays (regenerable via scripts)
 outputs/*.pt
@@ -17,9 +20,8 @@ outputs/*.npy
 
 # Keep the plots and summary CSVs — these are your evidence, commit them
 !outputs/*.png
-!outputs/evaluation_summary.csv
-!outputs/causal_edges_v2x.csv
-!outputs/performance_metrics.csv
+!outputs/*.csv
+!outputs/*.png
 
 # Kaggle credentials — NEVER commit this
 kaggle.json

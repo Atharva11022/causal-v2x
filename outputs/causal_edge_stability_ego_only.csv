@@ -1,0 +1,2 @@
+degradation,source,target,support_count,n_bootstraps,stability,stable
+clean,ego_accel,ego_speed,8,20,0.4,False

@@ -1,106 +1,121 @@
-"""
-Phase 6 — Evaluation.
-Run: python 05_evaluate.py
+"""Evaluate reliable generation under degraded V2X communication."""
 
-Compares the causal-masked CVAE vs. the unconstrained baseline CVAE
-(from Phase 5) on:
-  1) Reconstruction accuracy vs. real near-miss data
-  2) Diversity of generated samples
-  3) Causal consistency: does the generated ego reaction correlate
-     with context features the causal graph says it should — and NOT
-     correlate with ones it doesn't?
-Saves outputs/evaluation_summary.csv and a comparison plot.
-"""
+from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
-TARGET_COLS  = ["v_Acc", "v_Vel"]
-CONTEXT_COLS = ["lead_vel", "lead_acc", "Space_Headway", "Time_Headway", "rel_speed_to_lead"]
 
-real_X = np.load("outputs/real_val_X.npy")
-real_C = np.load("outputs/real_val_C.npy")
-gen_masked = np.load("outputs/gen_masked_X.npy")
-gen_baseline = np.load("outputs/gen_baseline_X.npy")
-context = np.load("outputs/gen_context.npy")
-mask = np.load("outputs/causal_mask.npy")  # (context_dim, target_dim)
+OUT_DIR = Path("outputs")
+TARGET_COLS = ["ego_accel", "ego_speed"]
+CONTEXT_COLS = [
+    "lead_speed",
+    "lead_accel",
+    "gap_distance",
+    "relative_speed",
+    "lead_observed",
+]
+EXPERIMENT_LABELS = [
+    "clean",
+    "dropout_10",
+    "dropout_25",
+    "dropout_50",
+    "delay_1",
+    "delay_2",
+    "dropout_20_delay_1",
+]
 
-results = {}
 
-# ------------------------------------------------------------
-# 1. Reconstruction accuracy (distributional closeness to real data)
-#    Compare mean/std of generated vs. real target features.
-# ------------------------------------------------------------
+def correlation_matrix(generated, context):
+    matrix = np.zeros((context.shape[1], generated.shape[1]))
+    for context_index in range(context.shape[1]):
+        for target_index in range(generated.shape[1]):
+            if (
+                np.std(context[:, context_index]) > 1e-8
+                and np.std(generated[:, target_index]) > 1e-8
+            ):
+                matrix[context_index, target_index] = abs(
+                    np.corrcoef(context[:, context_index], generated[:, target_index])[
+                        0, 1
+                    ]
+                )
+    return matrix
 
-for name, gen in [("causal_masked", gen_masked), ("baseline", gen_baseline)]:
-    mae_mean = np.mean(np.abs(gen.mean(axis=0) - real_X.mean(axis=0)))
-    results[f"{name}_dist_mean_MAE"] = mae_mean
 
-# ------------------------------------------------------------
-# 2. Diversity — variance of generated samples (too low = mode collapse)
-# ------------------------------------------------------------
+def evaluate_generator(generated, context, mask):
+    correlations = correlation_matrix(generated, context)
+    linked = correlations[mask == 1].mean() if mask.any() else np.nan
+    unlinked = correlations[mask == 0].mean() if (~mask.astype(bool)).any() else np.nan
+    return float(linked), float(unlinked), float(linked - unlinked)
 
-for name, gen in [("causal_masked", gen_masked), ("baseline", gen_baseline),
-                   ("real_data", real_X)]:
-    results[f"{name}_diversity_std"] = float(np.mean(gen.std(axis=0)))
 
-# ------------------------------------------------------------
-# 3. Causal consistency score
-#    For each context feature, compute |correlation| with each target
-#    feature in the GENERATED data, then compare against what the
-#    causal graph says should be linked (mask==1) vs not (mask==0).
-# ------------------------------------------------------------
+if __name__ == "__main__":
+    rows = []
+    for label in EXPERIMENT_LABELS:
+        suffix = "" if label == "clean" else f"_{label}"
+        real = np.load(OUT_DIR / f"real_val_X{suffix}.npy")
+        context = np.load(OUT_DIR / f"gen_context{suffix}.npy")
+        mask = np.load(OUT_DIR / f"causal_mask{suffix}.npy").astype(bool)
+        for name in ["causal_masked", "baseline"]:
+            file_name = "masked" if name == "causal_masked" else name
+            generated = np.load(OUT_DIR / f"gen_{file_name}_X{suffix}.npy")
+            linked, unlinked, gap = evaluate_generator(generated, context, mask)
+            rows.append(
+                {
+                    "degradation": label,
+                    "model": name,
+                    "causal_mask_links": int(mask.sum())
+                    if name == "causal_masked"
+                    else np.nan,
+                    "distribution_mean_mae": float(
+                        np.mean(np.abs(generated.mean(axis=0) - real.mean(axis=0)))
+                    ),
+                    "diversity_std": float(np.mean(generated.std(axis=0))),
+                    "linked_corr": linked,
+                    "unlinked_corr": unlinked,
+                    "consistency_gap": gap,
+                }
+            )
+        if label == "dropout_20_delay_1":
+            robust = np.load(OUT_DIR / "gen_robust_X_dropout_20_delay_1.npy")
+            robust_mask = np.load(
+                OUT_DIR / "causal_mask_robust_dropout_20_delay_1.npy"
+            ).astype(bool)
+            linked, unlinked, gap = evaluate_generator(robust, context, robust_mask)
+            rows.append(
+                {
+                    "degradation": label,
+                    "model": "robust_masked",
+                    "causal_mask_links": int(robust_mask.sum()),
+                    "distribution_mean_mae": float(
+                        np.mean(np.abs(robust.mean(axis=0) - real.mean(axis=0)))
+                    ),
+                    "diversity_std": float(np.mean(robust.std(axis=0))),
+                    "linked_corr": linked,
+                    "unlinked_corr": unlinked,
+                    "consistency_gap": gap,
+                }
+            )
 
-def causal_consistency(gen_X, context, mask):
-    n_c, n_t = mask.shape
-    corr_matrix = np.zeros((n_c, n_t))
-    for i in range(n_c):
-        for j in range(n_t):
-            if np.std(context[:, i]) > 1e-8 and np.std(gen_X[:, j]) > 1e-8:
-                corr_matrix[i, j] = abs(np.corrcoef(context[:, i], gen_X[:, j])[0, 1])
+    summary = pd.DataFrame(rows)
+    summary.to_csv(OUT_DIR / "evaluation_summary.csv", index=False)
+    print(summary.to_string(index=False))
 
-    linked_corr = corr_matrix[mask == 1].mean() if (mask == 1).any() else np.nan
-    unlinked_corr = corr_matrix[mask == 0].mean() if (mask == 0).any() else np.nan
-    return linked_corr, unlinked_corr, corr_matrix
-
-linked_m, unlinked_m, corr_m = causal_consistency(gen_masked, context, mask)
-linked_b, unlinked_b, corr_b = causal_consistency(gen_baseline, context, mask)
-
-results["causal_masked_linked_corr"] = linked_m
-results["causal_masked_unlinked_corr"] = unlinked_m
-results["baseline_linked_corr"] = linked_b
-results["baseline_unlinked_corr"] = unlinked_b
-
-# A good constrained model: high linked_corr, low unlinked_corr.
-# A good "causal consistency gap" = linked_corr - unlinked_corr, should be
-# larger for the causal-masked model than the baseline.
-results["causal_masked_consistency_gap"] = linked_m - unlinked_m
-results["baseline_consistency_gap"] = linked_b - unlinked_b
-
-# ------------------------------------------------------------
-# PRINT + SAVE
-# ------------------------------------------------------------
-
-print("\n=== Evaluation summary ===")
-for k, v in results.items():
-    print(f"  {k}: {v:.4f}" if v == v else f"  {k}: n/a")
-
-pd.DataFrame([results]).to_csv("outputs/evaluation_summary.csv", index=False)
-print("\nSaved: outputs/evaluation_summary.csv")
-
-# ------------------------------------------------------------
-# PLOT: consistency gap comparison
-# ------------------------------------------------------------
-
-fig, ax = plt.subplots(figsize=(6, 4.5))
-models = ["Causal-masked", "Baseline"]
-gaps = [results["causal_masked_consistency_gap"], results["baseline_consistency_gap"]]
-ax.bar(models, gaps, color=["#4a90d9", "#d97a4a"])
-ax.set_ylabel("Causal consistency gap\n(linked corr - unlinked corr)")
-ax.set_title("Causal consistency: masked generator vs. baseline")
-plt.tight_layout()
-plt.savefig("outputs/causal_consistency_comparison.png", dpi=150)
-print("Saved: outputs/causal_consistency_comparison.png")
-
-print("\nPhase 6 complete. This plot + evaluation_summary.csv is your objective-8 evidence.")
+    figure, axis = plt.subplots(figsize=(8, 4.5))
+    for model, color in [("causal_masked", "#4a90d9"), ("baseline", "#d97a4a")]:
+        subset = summary[summary["model"].eq(model)]
+        axis.plot(
+            subset["degradation"],
+            subset["consistency_gap"],
+            "o-",
+            label=model,
+            color=color,
+        )
+    axis.set_ylabel("Linked correlation - unlinked correlation")
+    axis.set_title("Causal consistency under degraded V2X")
+    axis.tick_params(axis="x", rotation=35)
+    axis.legend()
+    figure.tight_layout()
+    figure.savefig(OUT_DIR / "causal_consistency_comparison.png", dpi=150)
+    print("Saved evaluation_summary.csv and causal_consistency_comparison.png")

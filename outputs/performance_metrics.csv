@@ -1,2 +1,8 @@
-device,python_version,torch_version,platform,causal_masked_train_time_sec,baseline_train_time_sec,causal_masked_inference_latency_ms,baseline_inference_latency_ms,epochs,random_seed
-mps,3.14.4,2.13.0,macOS-26.5.2-arm64-arm-64bit-Mach-O,0.9674670696258545,0.5183501243591309,0.13695001602172852,0.12325763702392578,300,42
+degradation,device,python_version,torch_version,epochs,random_seed,causal_mask_links,causal_masked_train_time_sec,baseline_train_time_sec,robust_masked_train_time_sec
+clean,mps,3.14.4,2.13.0,200,42,4,0.5073461532592773,0.32012295722961426,0.0
+dropout_10,mps,3.14.4,2.13.0,200,42,4,0.3495759963989258,0.30129194259643555,0.0
+dropout_25,mps,3.14.4,2.13.0,200,42,5,0.30496811866760254,0.3008458614349365,0.0
+dropout_50,mps,3.14.4,2.13.0,200,42,4,0.30426502227783203,0.3018522262573242,0.0
+delay_1,mps,3.14.4,2.13.0,200,42,5,0.30647802352905273,0.3058919906616211,0.0
+delay_2,mps,3.14.4,2.13.0,200,42,5,0.3065071105957031,0.30136775970458984,0.0
+dropout_20_delay_1,mps,3.14.4,2.13.0,200,42,5,0.3421511650085449,0.3035888671875,0.3056609630584717

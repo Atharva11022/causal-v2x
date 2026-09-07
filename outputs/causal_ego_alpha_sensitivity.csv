@@ -1,0 +1,5 @@
+alpha,source,target,support_count,n_bootstraps,stability,stable_at_0_70
+0.01,ego_accel,ego_speed,5,20,0.25,False
+0.05,ego_accel,ego_speed,8,20,0.4,False
+0.1,ego_accel,ego_speed,9,20,0.45,False
+0.2,ego_accel,ego_speed,11,20,0.55,False

@@ -1,265 +1,261 @@
-"""
-Phase 5 — Generative replay of near-miss scenarios.
-Run: python 04_generative_replay.py
+"""Generate near-miss reactions using a stability-aware causal mask."""
 
-Trains TWO small conditional VAEs on data/near_miss_events.csv:
-  1) causal-masked CVAE  -> the ego "reaction" is generated only from
-     context features that Phase 4's causal graph actually links to it.
-  2) unconstrained CVAE  -> baseline, fully dense connections.
+import platform
+import time
+from pathlib import Path
 
-Saves both trained models and a batch of generated samples from each,
-for Phase 6 evaluation.
-"""
-
-import pandas as pd
 import numpy as np
+import pandas as pd
 import torch
-import torch.nn as nn
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-import os
-import time
-import platform
+from torch import nn
 
-os.makedirs("outputs", exist_ok=True)
-torch.manual_seed(42)
-np.random.seed(42)
-
-DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
-print(f"Using device: {DEVICE}")
-print(f"Platform: {platform.platform()}, Python: {platform.python_version()}, "
-      f"PyTorch: {torch.__version__}")
-
-# ------------------------------------------------------------
-# 1. LOAD DATA
-# ------------------------------------------------------------
-
-events = pd.read_csv("data/near_miss_events.csv")
-
-TARGET_COLS  = ["v_Acc", "v_Vel"]                                           # ego "reaction"
-CONTEXT_COLS = ["lead_vel", "lead_acc", "Space_Headway", "Time_Headway", "rel_speed_to_lead"]  # V2X-proxy context
-
-X = events[TARGET_COLS].to_numpy(dtype=np.float32)
-C = events[CONTEXT_COLS].to_numpy(dtype=np.float32)
-
-x_scaler = StandardScaler().fit(X)
-c_scaler = StandardScaler().fit(C)
-X = x_scaler.transform(X)
-C = c_scaler.transform(C)
-
-X_train, X_val, C_train, C_val = train_test_split(X, C, test_size=0.2, random_state=42)
-
-X_train_t = torch.tensor(X_train, device=DEVICE)
-C_train_t = torch.tensor(C_train, device=DEVICE)
-X_val_t   = torch.tensor(X_val, device=DEVICE)
-C_val_t   = torch.tensor(C_val, device=DEVICE)
-
-print(f"Train events: {len(X_train)}, Val events: {len(X_val)}")
-
-# ------------------------------------------------------------
-# 2. BUILD THE CAUSAL MASK  (context_features -> target_features)
-#    from Phase 4's causal_edges_v2x.csv
-# ------------------------------------------------------------
-
-# Map aggregated causal-graph node names -> frame-level feature names used here
-TARGET_MAP  = {"mean_accel": "v_Acc", "mean_speed": "v_Vel"}
-CONTEXT_MAP = {
-    "mean_lead_vel": "lead_vel",
-    "mean_lead_acc": "lead_acc",
-    "space_headway_mean": "Space_Headway",
-    "min_time_headway": "Time_Headway",
-    "rel_speed_to_lead": "rel_speed_to_lead",
-}
-
-edges = pd.read_csv("outputs/causal_edges_v2x.csv")
-
-mask = np.zeros((len(CONTEXT_COLS), len(TARGET_COLS)), dtype=np.float32)
-n_edges_used = 0
-for _, row in edges.iterrows():
-    src, tgt = row["source"], row["target"]
-    # check both directions since PC edges aren't always fully oriented
-    for a, b in [(src, tgt), (tgt, src)]:
-        if a in CONTEXT_MAP and b in TARGET_MAP:
-            ci = CONTEXT_COLS.index(CONTEXT_MAP[a])
-            ti = TARGET_COLS.index(TARGET_MAP[b])
-            mask[ci, ti] = 1.0
-            n_edges_used += 1
-
-print(f"Causal mask built: {n_edges_used} context->target links active out of {mask.size} possible")
-if n_edges_used == 0:
-    print("WARNING: no causal edges mapped — check causal_edges_v2x.csv node names, "
-          "or the constrained model will get zero context (degenerates to unconditional).")
-
-mask_t = torch.tensor(mask, device=DEVICE)
-
-# ------------------------------------------------------------
-# 3. MODEL
-# ------------------------------------------------------------
-
+DATA_DIR = Path("data")
+OUT_DIR = Path("outputs")
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+EXPERIMENT_LABELS = [
+    "clean",
+    "dropout_10",
+    "dropout_25",
+    "dropout_50",
+    "delay_1",
+    "delay_2",
+    "dropout_20_delay_1",
+]
+TARGET_COLS = ["ego_accel", "ego_speed"]
+CONTEXT_COLS = [
+    "lead_speed",
+    "lead_accel",
+    "gap_distance",
+    "relative_speed",
+    "lead_observed",
+]
 LATENT_DIM = 4
 HIDDEN_DIM = 16
-X_DIM = len(TARGET_COLS)
-C_DIM = len(CONTEXT_COLS)
+EPOCHS = 200
+SEED = 42
+
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
+
+
+def load_training_data(
+    label: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    events = pd.read_csv(DATA_DIR / f"near_miss_events_{label}.csv")
+    required = {"scenario_id", "ego_accel", "ego_speed", *CONTEXT_COLS}
+    missing = required.difference(events.columns)
+    if missing:
+        raise ValueError(f"Missing generator columns: {sorted(missing)}")
+
+    scenario_ids = events["scenario_id"].drop_duplicates().to_numpy()
+    train_ids, val_ids = train_test_split(
+        scenario_ids, test_size=0.2, random_state=SEED
+    )
+    train = events[events["scenario_id"].isin(train_ids)].copy()
+    val = events[events["scenario_id"].isin(val_ids)].copy()
+
+    x_scaler = StandardScaler().fit(train[TARGET_COLS])
+    c_scaler = StandardScaler().fit(
+        train[CONTEXT_COLS].fillna(train[CONTEXT_COLS].median())
+    )
+
+    def transform(frame: pd.DataFrame):
+        context = frame[CONTEXT_COLS].fillna(train[CONTEXT_COLS].median())
+        return (
+            x_scaler.transform(frame[TARGET_COLS]).astype(np.float32),
+            c_scaler.transform(context).astype(np.float32),
+        )
+
+    x_train, c_train = transform(train)
+    x_val, c_val = transform(val)
+    return x_train, c_train, x_val, c_val, x_scaler, c_scaler
+
+
+def build_mask(label: str, robust: bool = False) -> np.ndarray:
+    stability = pd.read_csv(OUT_DIR / "causal_edge_stability.csv")
+    stable = (
+        pd.read_csv(OUT_DIR / "causal_edges_robust.csv")
+        if robust
+        else stability[stability["degradation"].eq(label) & stability["stable"]]
+    )
+    mask = np.zeros((len(CONTEXT_COLS), len(TARGET_COLS)), dtype=np.float32)
+    for _, edge in stable.iterrows():
+        endpoints = {edge["source"], edge["target"]}
+        for context_index, context_name in enumerate(CONTEXT_COLS):
+            graph_name = context_name
+            if graph_name in endpoints:
+                for target_index, target_name in enumerate(TARGET_COLS):
+                    if target_name in endpoints:
+                        mask[context_index, target_index] = 1.0
+    np.save(OUT_DIR / "causal_mask.npy", mask)
+    source = "robust-all-conditions" if robust else label
+    print(f"Mask from {source}: {int(mask.sum())}/{mask.size} context-target links")
+    return mask
+
 
 class MaskedLinear(nn.Module):
-    """Linear layer where some input->output connections are forced to zero."""
-    def __init__(self, in_dim, out_dim, mask=None):
+    def __init__(self, input_dim, output_dim, mask=None):
         super().__init__()
-        self.linear = nn.Linear(in_dim, out_dim)
-        self.mask = mask  # shape (in_dim, out_dim) or None (=unconstrained)
+        self.linear = nn.Linear(input_dim, output_dim)
+        self.register_buffer(
+            "mask", torch.as_tensor(mask.T) if mask is not None else None
+        )
 
-    def forward(self, x):
+    def forward(self, values):
         if self.mask is None:
-            return self.linear(x)
-        # zero out masked-off weights each forward pass
-        w = self.linear.weight * self.mask.T
-        return torch.nn.functional.linear(x, w, self.linear.bias)
+            return self.linear(values)
+        weights = self.linear.weight * self.mask
+        return nn.functional.linear(values, weights, self.linear.bias)
+
 
 class CVAE(nn.Module):
-    def __init__(self, x_dim, c_dim, latent_dim, hidden_dim, causal_mask=None):
+    def __init__(self, causal_mask=None):
         super().__init__()
-        # Encoder sees x + c (full info; only the DECODER's context path is masked,
-        # since the mask represents which context vars are ALLOWED to drive the
-        # generated reaction — training/inference use is via decode()).
-        self.enc = nn.Sequential(
-            nn.Linear(x_dim + c_dim, hidden_dim), nn.ReLU(),
+        self.encoder = nn.Sequential(
+            nn.Linear(2 + len(CONTEXT_COLS), HIDDEN_DIM), nn.ReLU()
         )
-        self.enc_mu = nn.Linear(hidden_dim, latent_dim)
-        self.enc_logvar = nn.Linear(hidden_dim, latent_dim)
+        self.mu = nn.Linear(HIDDEN_DIM, LATENT_DIM)
+        self.logvar = nn.Linear(HIDDEN_DIM, LATENT_DIM)
+        self.decoder_hidden = nn.Linear(LATENT_DIM, HIDDEN_DIM)
+        self.decoder_output = nn.Linear(HIDDEN_DIM, 2)
+        self.context_output = MaskedLinear(len(CONTEXT_COLS), 2, causal_mask)
 
-        # context_to_output: mask shape is exactly (c_dim, x_dim) — a direct,
-        # causally-gated contribution from each context feature to each target
-        # feature, matching the causal graph edges one-to-one.
-        self.context_to_output = MaskedLinear(c_dim, x_dim, mask=causal_mask)
-        self.dec_hidden = nn.Linear(latent_dim, hidden_dim)
-        self.dec_out = nn.Linear(hidden_dim, x_dim)
+    def encode(self, x, context):
+        hidden = self.encoder(torch.cat([x, context], dim=1))
+        return self.mu(hidden), self.logvar(hidden)
 
-    def encode(self, x, c):
-        h = self.enc(torch.cat([x, c], dim=-1))
-        return self.enc_mu(h), self.enc_logvar(h)
+    def decode(self, latent, context):
+        generated = self.decoder_output(torch.relu(self.decoder_hidden(latent)))
+        return generated + self.context_output(context)
 
-    def reparam(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
+    def forward(self, x, context):
+        mu, logvar = self.encode(x, context)
+        latent = mu + torch.exp(0.5 * logvar) * torch.randn_like(mu)
+        return self.decode(latent, context), mu, logvar
 
-    def decode(self, z, c):
-        h = torch.relu(self.dec_hidden(z))
-        return self.dec_out(h) + self.context_to_output(c)
 
-    def forward(self, x, c):
-        mu, logvar = self.encode(x, c)
-        z = self.reparam(mu, logvar)
-        x_hat = self.decode(z, c)
-        return x_hat, mu, logvar
+def loss_function(prediction, target, mu, logvar):
+    reconstruction = nn.functional.mse_loss(prediction, target)
+    kl = -0.5 * torch.mean(1 + logvar - mu.square() - logvar.exp())
+    return reconstruction + 0.01 * kl, reconstruction
 
-def vae_loss(x_hat, x, mu, logvar):
-    recon = nn.functional.mse_loss(x_hat, x, reduction="mean")
-    kld = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
-    return recon + 0.01 * kld, recon, kld
 
-# ------------------------------------------------------------
-# 4. TRAIN
-# ------------------------------------------------------------
+def train_model(mask, tag, x_train, c_train, x_val, c_val):
+    model = CVAE(mask).to(DEVICE)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    x_train_t = torch.tensor(x_train, device=DEVICE)
+    c_train_t = torch.tensor(c_train, device=DEVICE)
+    x_val_t = torch.tensor(x_val, device=DEVICE)
+    c_val_t = torch.tensor(c_val, device=DEVICE)
+    started = time.time()
 
-def train_model(causal_mask, tag, epochs=300, lr=1e-3):
-    model = CVAE(X_DIM, C_DIM, LATENT_DIM, HIDDEN_DIM, causal_mask=causal_mask).to(DEVICE)
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
-
-    n_params = sum(p.numel() for p in model.parameters())
-    train_start = time.time()
-
-    for epoch in range(epochs):
+    for epoch in range(EPOCHS):
         model.train()
-        opt.zero_grad()
-        x_hat, mu, logvar = model(X_train_t, C_train_t)
-        loss, recon, kld = vae_loss(x_hat, X_train_t, mu, logvar)
-        loss.backward()
-        opt.step()
+        optimizer.zero_grad()
+        predicted, mu, logvar = model(x_train_t, c_train_t)
+        total, reconstruction = loss_function(predicted, x_train_t, mu, logvar)
+        total.backward()
+        optimizer.step()
 
-        if epoch % 50 == 0 or epoch == epochs - 1:
+        if epoch == 0 or epoch == EPOCHS - 1:
             model.eval()
             with torch.no_grad():
-                xv_hat, muv, logvarv = model(X_val_t, C_val_t)
-                val_loss, val_recon, _ = vae_loss(xv_hat, X_val_t, muv, logvarv)
-            print(f"[{tag}] epoch {epoch:4d}  train_recon={recon.item():.4f}  val_recon={val_recon.item():.4f}")
+                val_prediction, val_mu, val_logvar = model(x_val_t, c_val_t)
+                _, val_reconstruction = loss_function(
+                    val_prediction, x_val_t, val_mu, val_logvar
+                )
+            print(
+                f"{tag} epoch={epoch} train_recon={reconstruction.item():.4f} val_recon={val_reconstruction.item():.4f}"
+            )
 
-    train_time = time.time() - train_start
-    print(f"[{tag}] training time: {train_time:.2f}s for {epochs} epochs "
-          f"({n_params} trainable params, device={DEVICE})")
+    elapsed = time.time() - started
+    torch.save(model.state_dict(), OUT_DIR / f"cvae_{tag}.pt")
+    return model, elapsed
 
-    torch.save(model.state_dict(), f"outputs/cvae_{tag}.pt")
-    return model, train_time
 
-print("\nTraining CAUSAL-MASKED CVAE ...")
-model_masked, time_masked = train_model(causal_mask=mask_t, tag="causal_masked")
-
-print("\nTraining UNCONSTRAINED baseline CVAE ...")
-model_baseline, time_baseline = train_model(causal_mask=None, tag="baseline")
-
-# ------------------------------------------------------------
-# 5. GENERATE SAMPLES (for Phase 6 evaluation)
-# ------------------------------------------------------------
-
-def generate(model, C_context, n_samples_per_context=5):
+def generate(model, contexts, samples_per_context=5):
     model.eval()
+    repeated = contexts.repeat_interleave(samples_per_context, dim=0)
     with torch.no_grad():
-        C_rep = C_context.repeat_interleave(n_samples_per_context, dim=0)
-        z = torch.randn(C_rep.shape[0], LATENT_DIM, device=DEVICE)
-        x_gen = model.decode(z, C_rep)
-    return x_gen.cpu().numpy(), C_rep.cpu().numpy()
+        latent = torch.randn(len(repeated), LATENT_DIM, device=DEVICE)
+        generated = model.decode(latent, repeated)
+    return generated.cpu().numpy(), repeated.cpu().numpy()
 
-def measure_inference_latency(model, C_context, n_trials=100):
-    """Single-scenario generation latency, for real-time deployment context."""
-    model.eval()
-    single_c = C_context[:1]
-    # warmup (first call includes lazy init overhead, not representative)
-    with torch.no_grad():
-        z = torch.randn(1, LATENT_DIM, device=DEVICE)
-        _ = model.decode(z, single_c)
-    if DEVICE == "mps":
-        torch.mps.synchronize()
 
-    start = time.time()
-    with torch.no_grad():
-        for _ in range(n_trials):
-            z = torch.randn(1, LATENT_DIM, device=DEVICE)
-            _ = model.decode(z, single_c)
-    if DEVICE == "mps":
-        torch.mps.synchronize()
-    elapsed = time.time() - start
-    return (elapsed / n_trials) * 1000  # ms per single-scenario generation
+if __name__ == "__main__":
+    performance = []
+    for label in EXPERIMENT_LABELS:
+        print(f"\n=== Generating under {label} ===")
+        x_train, c_train, x_val, c_val, x_scaler, c_scaler = load_training_data(label)
+        mask = build_mask(label)
+        mask_t = torch.tensor(mask, device=DEVICE)
+        masked_model, masked_time = train_model(
+            mask_t, f"causal_masked_{label}", x_train, c_train, x_val, c_val
+        )
+        baseline_model, baseline_time = train_model(
+            None, f"baseline_{label}", x_train, c_train, x_val, c_val
+        )
+        robust_model = None
+        robust_time = 0.0
+        robust_mask = None
+        if label == "dropout_20_delay_1":
+            robust_mask = build_mask(label, robust=True)
+            robust_model, robust_time = train_model(
+                torch.tensor(robust_mask, device=DEVICE),
+                "robust_masked_dropout_20_delay_1",
+                x_train,
+                c_train,
+                x_val,
+                c_val,
+            )
 
-gen_masked, ctx_masked = generate(model_masked, C_val_t)
-gen_baseline, ctx_baseline = generate(model_baseline, C_val_t)
+        c_val_t = torch.tensor(c_val, device=DEVICE)
+        generated_masked, context_masked = generate(masked_model, c_val_t)
+        generated_baseline, _ = generate(baseline_model, c_val_t)
+        suffix = "" if label == "clean" else f"_{label}"
+        np.save(
+            OUT_DIR / f"gen_masked_X{suffix}.npy",
+            x_scaler.inverse_transform(generated_masked),
+        )
+        np.save(
+            OUT_DIR / f"gen_baseline_X{suffix}.npy",
+            x_scaler.inverse_transform(generated_baseline),
+        )
+        np.save(
+            OUT_DIR / f"gen_context{suffix}.npy",
+            c_scaler.inverse_transform(context_masked),
+        )
+        np.save(OUT_DIR / f"causal_mask{suffix}.npy", mask)
+        np.save(OUT_DIR / f"real_val_X{suffix}.npy", x_scaler.inverse_transform(x_val))
+        np.save(OUT_DIR / f"real_val_C{suffix}.npy", c_scaler.inverse_transform(c_val))
+        if robust_model is not None:
+            generated_robust, _ = generate(robust_model, c_val_t)
+            np.save(
+                OUT_DIR / "gen_robust_X_dropout_20_delay_1.npy",
+                x_scaler.inverse_transform(generated_robust),
+            )
+            np.save(
+                OUT_DIR / "causal_mask_robust_dropout_20_delay_1.npy",
+                robust_mask,
+            )
 
-latency_masked_ms = measure_inference_latency(model_masked, C_val_t)
-latency_baseline_ms = measure_inference_latency(model_baseline, C_val_t)
-print(f"\nInference latency (single scenario, mean of 100 runs, device={DEVICE}):")
-print(f"  causal_masked: {latency_masked_ms:.4f} ms")
-print(f"  baseline:      {latency_baseline_ms:.4f} ms")
+        performance.append(
+            {
+                "degradation": label,
+                "device": DEVICE,
+                "python_version": platform.python_version(),
+                "torch_version": torch.__version__,
+                "epochs": EPOCHS,
+                "random_seed": SEED,
+                "causal_mask_links": int(mask.sum()),
+                "causal_masked_train_time_sec": masked_time,
+                "baseline_train_time_sec": baseline_time,
+                "robust_masked_train_time_sec": robust_time,
+            }
+        )
 
-np.save("outputs/gen_masked_X.npy", x_scaler.inverse_transform(gen_masked))
-np.save("outputs/gen_baseline_X.npy", x_scaler.inverse_transform(gen_baseline))
-np.save("outputs/gen_context.npy", c_scaler.inverse_transform(ctx_masked))
-np.save("outputs/real_val_X.npy", x_scaler.inverse_transform(X_val))
-np.save("outputs/real_val_C.npy", c_scaler.inverse_transform(C_val))
-np.save("outputs/causal_mask.npy", mask)
-
-perf = pd.DataFrame([{
-    "device": DEVICE,
-    "python_version": platform.python_version(),
-    "torch_version": torch.__version__,
-    "platform": platform.platform(),
-    "causal_masked_train_time_sec": time_masked,
-    "baseline_train_time_sec": time_baseline,
-    "causal_masked_inference_latency_ms": latency_masked_ms,
-    "baseline_inference_latency_ms": latency_baseline_ms,
-    "epochs": 300,
-    "random_seed": 42,
-}])
-perf.to_csv("outputs/performance_metrics.csv", index=False)
-print("Saved: outputs/performance_metrics.csv")
-
-print("\nSaved generated samples and models to outputs/")
-print("Phase 5 complete.")
+    pd.DataFrame(performance).to_csv(OUT_DIR / "performance_metrics.csv", index=False)
+    print("Generative replay complete for all degradation conditions.")

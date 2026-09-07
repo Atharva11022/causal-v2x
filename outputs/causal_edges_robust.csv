@@ -1,0 +1,6 @@
+source,target,condition_count
+ego_accel,gap_distance,7
+ego_accel,relative_speed,7
+ego_speed,gap_distance,7
+ego_speed,relative_speed,7
+gap_distance,lead_speed,7
