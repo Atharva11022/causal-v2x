@@ -18,10 +18,15 @@ data/*_extracted/
 outputs/*.pt
 outputs/*.npy
 
-# Keep the plots and summary CSVs — these are your evidence, commit them
+# Keep small plots and summary CSVs as reproducible evidence.
 !outputs/*.png
 !outputs/*.csv
-!outputs/*.png
+
+# Local legacy report awaiting rewrite for the current TFD implementation.
+docs/report.md
+docs/Internship_Report.docx
+docs/Internship_Report.pdf
+docs/presentation.pptx
 
 # Kaggle credentials — NEVER commit this
 kaggle.json
