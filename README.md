@@ -13,10 +13,13 @@ Verified example run:
 - 148 vehicles
 - 20,696 interaction rows
 - 1,628 derived near-miss events
-- 84 bootstrap causal-edge stability records
-- 7 clean cooperative stable edges at the selected stability threshold
+- 777 valid five-step ego reaction windows per communication condition
+- 117 training-only directed causal-edge stability records
+- 6 clean cooperative stable edges at the selected stability threshold
 
 Near-miss labels are derived from trajectory variables using closing-gap TTC and hard deceleration criteria. They are not pre-existing dataset labels. Communication degradation is simulated on cooperative context through controlled dropout and temporal delay; clean targets and event labels are preserved.
+
+The V2X data itself is real cooperative data, not a proxy: the local files come from AIR-THU's official V2X-Seq-TFD vehicle-infrastructure cooperative-view trajectory release. The released trajectory CSVs contain cooperative tracks, not packet-level network logs. Therefore the project studies real V2X-derived observations under reproducible simulated communication degradation, rather than claiming measured wireless latency or packet-loss behavior.
 
 ## Research workflow
 
@@ -30,7 +33,7 @@ Near-miss labels are derived from trajectory variables using closing-gap TTC and
 8. Train masked CVAEs and a dense baseline.
 9. Compare causal consistency, distributional error, diversity, and degradation behavior.
 
-The current generator produces two reaction-state variables, ego acceleration and ego speed. It does not generate complete multi-agent trajectory sequences.
+The project now includes a five-step ego reaction-trajectory generator for each near-miss context, predicting ego speed and acceleration at 0.1-second intervals. It is not yet a complete multi-agent trajectory or scene generator.
 
 ## Repository layout
 
@@ -41,6 +44,8 @@ The current generator produces two reaction-state variables, ego acceleration an
 | `src/02_causal_discovery.py` | Scenario-bootstrap PC discovery, stability analysis, sensitivity analysis, and graph comparison |
 | `src/03_generative_replay.py` | Train adaptive masked, robust masked, and dense CVAE variants |
 | `src/04_evaluate.py` | Evaluate all communication conditions and generator variants |
+| `src/05_robustness.py` | Run multi-seed and same-sparsity random-mask controls |
+| `src/06_trajectory_generation.py` | Generate five-step ego reaction trajectories with physical-validity checks |
 | `tests/test_pipeline.py` | Lightweight regression tests for the pipeline contracts |
 | `outputs/` | Small plots and CSV evidence artifacts; models and NumPy arrays are ignored |
 | `docs/` | Reports, presentation material, and the final abstract |
@@ -80,6 +85,8 @@ python3 src/01_preprocess.py
 python3 src/02_causal_discovery.py
 python3 src/03_generative_replay.py
 python3 src/04_evaluate.py
+python3 src/05_robustness.py
+python3 src/06_trajectory_generation.py
 
 python3 -m unittest discover -s tests -v
 ```
@@ -92,11 +99,13 @@ For the `dropout_20_delay_1` condition in the current example experiment:
 
 | Generator | Consistency gap |
 |---|---:|
-| Adaptive stability-aware mask | 0.3240 |
-| Robust all-condition mask | 0.2146 |
-| Dense baseline | 0.0295 |
+| Adaptive stability-aware mask | 0.3070 |
+| Robust all-condition mask | 0.3474 |
+| Dense baseline | -0.0443 |
 
 The consistency gap is the mean absolute correlation for graph-supported context-to-reaction links minus the corresponding correlation for unsupported links. Delay-2 is an adverse condition in the current example results and should be reported as such.
+
+The primary robustness control uses three training seeds and a same-sparsity random mask. Mean consistency gaps are 0.3261 for the adaptive mask, 0.3261 for the robust mask, 0.2977 for the random mask, and 0.0238 for the dense baseline. The random-mask interval overlaps the causal-mask interval, so these results support structural selectivity without claiming unique causal attribution.
 
 ## Limitations
 

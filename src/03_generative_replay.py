@@ -35,6 +35,8 @@ LATENT_DIM = 4
 HIDDEN_DIM = 16
 EPOCHS = 200
 SEED = 42
+EVAL_SEED = 2024
+SAMPLES_PER_CONTEXT = 32
 
 np.random.seed(SEED)
 torch.manual_seed(SEED)
@@ -176,12 +178,11 @@ def train_model(mask, tag, x_train, c_train, x_val, c_val):
     return model, elapsed
 
 
-def generate(model, contexts, samples_per_context=5):
+def generate(model, contexts, latent_bank):
     model.eval()
-    repeated = contexts.repeat_interleave(samples_per_context, dim=0)
+    repeated = contexts.repeat_interleave(SAMPLES_PER_CONTEXT, dim=0)
     with torch.no_grad():
-        latent = torch.randn(len(repeated), LATENT_DIM, device=DEVICE)
-        generated = model.decode(latent, repeated)
+        generated = model.decode(latent_bank, repeated)
     return generated.cpu().numpy(), repeated.cpu().numpy()
 
 
@@ -213,8 +214,14 @@ if __name__ == "__main__":
             )
 
         c_val_t = torch.tensor(c_val, device=DEVICE)
-        generated_masked, context_masked = generate(masked_model, c_val_t)
-        generated_baseline, _ = generate(baseline_model, c_val_t)
+        generator = torch.Generator(device=DEVICE).manual_seed(EVAL_SEED)
+        latent_bank = torch.randn(
+            (len(c_val) * SAMPLES_PER_CONTEXT, LATENT_DIM),
+            generator=generator,
+            device=DEVICE,
+        )
+        generated_masked, context_masked = generate(masked_model, c_val_t, latent_bank)
+        generated_baseline, _ = generate(baseline_model, c_val_t, latent_bank)
         suffix = "" if label == "clean" else f"_{label}"
         np.save(
             OUT_DIR / f"gen_masked_X{suffix}.npy",
@@ -232,7 +239,7 @@ if __name__ == "__main__":
         np.save(OUT_DIR / f"real_val_X{suffix}.npy", x_scaler.inverse_transform(x_val))
         np.save(OUT_DIR / f"real_val_C{suffix}.npy", c_scaler.inverse_transform(c_val))
         if robust_model is not None:
-            generated_robust, _ = generate(robust_model, c_val_t)
+            generated_robust, _ = generate(robust_model, c_val_t, latent_bank)
             np.save(
                 OUT_DIR / "gen_robust_X_dropout_20_delay_1.npy",
                 x_scaler.inverse_transform(generated_robust),
@@ -250,6 +257,8 @@ if __name__ == "__main__":
                 "torch_version": torch.__version__,
                 "epochs": EPOCHS,
                 "random_seed": SEED,
+                "evaluation_seed": EVAL_SEED,
+                "samples_per_context": SAMPLES_PER_CONTEXT,
                 "causal_mask_links": int(mask.sum()),
                 "causal_masked_train_time_sec": masked_time,
                 "baseline_train_time_sec": baseline_time,

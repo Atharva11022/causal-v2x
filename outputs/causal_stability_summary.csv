@@ -1,8 +1,8 @@
 degradation,candidate_edges,stable_edges
-clean,12,7
-delay_1,12,8
-delay_2,12,6
-dropout_10,11,7
-dropout_20_delay_1,13,7
-dropout_25,11,8
-dropout_50,13,6
+clean,17,6
+delay_1,14,2
+delay_2,21,3
+dropout_10,17,6
+dropout_20_delay_1,21,5
+dropout_25,15,5
+dropout_50,12,4

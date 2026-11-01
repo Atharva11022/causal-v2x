@@ -29,6 +29,9 @@ DEGRADATION_LEVELS = [
     ("delay_2", 0.0, 2),
     ("dropout_20_delay_1", 0.20, 1),
 ]
+FRAME_INTERVAL_SECONDS = 0.1
+TIMESTAMP_TOLERANCE_DECIMALS = 6
+REACTION_WINDOW_HORIZON = 5
 
 
 def _trajectory_files(root: Path, split: str) -> list[Path]:
@@ -167,16 +170,53 @@ def simulate_degradation(
 
     if delay_frames:
         degraded = degraded.sort_values(["scenario_id", "ego_id", "timestamp"])
+        delayed = degraded.copy()
+        delayed["_row_id"] = np.arange(len(delayed))
+        delayed["_source_timestamp"] = np.round(
+            delayed["timestamp"] - delay_frames * FRAME_INTERVAL_SECONDS,
+            TIMESTAMP_TOLERANCE_DECIMALS,
+        )
+
+        source = interactions[
+            ["scenario_id", "ego_id", "lead_id", "timestamp", *context_to_degrade]
+        ].copy()
+        source["_source_timestamp"] = np.round(
+            source["timestamp"], TIMESTAMP_TOLERANCE_DECIMALS
+        )
+        source = source.drop_duplicates(
+            ["scenario_id", "ego_id", "lead_id", "_source_timestamp"]
+        )
+        source = source.drop(columns="timestamp").rename(
+            columns={column: f"_delayed_{column}" for column in context_to_degrade}
+        )
+        delayed = delayed.merge(
+            source[
+                [
+                    "scenario_id",
+                    "ego_id",
+                    "lead_id",
+                    "_source_timestamp",
+                    *[f"_delayed_{column}" for column in context_to_degrade],
+                ]
+            ],
+            on=["scenario_id", "ego_id", "lead_id", "_source_timestamp"],
+            how="left",
+            sort=False,
+        )
+        delayed = delayed.sort_values("_row_id")
         for column in context_to_degrade:
-            degraded[column] = degraded.groupby(["scenario_id", "ego_id"], sort=False)[
-                column
-            ].shift(delay_frames)
+            degraded[column] = delayed[f"_delayed_{column}"].to_numpy()
+        degraded["lead_observed"] = (
+            degraded[context_to_degrade].notna().all(axis=1).astype(float)
+        )
 
     if dropout_rate:
         rng = np.random.default_rng(seed)
         for column in context_to_degrade:
             dropped = rng.random(len(degraded)) < dropout_rate
             degraded.loc[dropped, column] = np.nan
+
+    if dropout_rate or delay_frames:
         degraded["lead_observed"] = (
             degraded[context_to_degrade].notna().all(axis=1).astype(float)
         )
@@ -214,6 +254,62 @@ def build_cooperative_features(interactions: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def build_reaction_windows(
+    interactions: pd.DataFrame,
+    events: pd.DataFrame,
+    horizon: int = REACTION_WINDOW_HORIZON,
+) -> pd.DataFrame:
+    """Build future ego reaction windows for near-miss event anchors."""
+    target_columns = ["ego_speed", "ego_accel"]
+    context_columns = [
+        "lead_speed",
+        "lead_accel",
+        "gap_distance",
+        "relative_speed",
+        "lead_observed",
+    ]
+    indexed = {}
+    for key, group in interactions.groupby(
+        ["scenario_id", "ego_id", "lead_id"], sort=False
+    ):
+        indexed[key] = (
+            group.assign(
+                _timestamp_key=np.round(
+                    group["timestamp"], TIMESTAMP_TOLERANCE_DECIMALS
+                )
+            )
+            .drop_duplicates("_timestamp_key")
+            .set_index("_timestamp_key")
+        )
+
+    rows = []
+    for event in events.itertuples(index=False):
+        key = (event.scenario_id, event.ego_id, event.lead_id)
+        timeline = indexed.get(key)
+        if timeline is None:
+            continue
+        future_keys = np.round(
+            event.timestamp + FRAME_INTERVAL_SECONDS * np.arange(1, horizon + 1),
+            TIMESTAMP_TOLERANCE_DECIMALS,
+        )
+        if not np.isin(future_keys, timeline.index.to_numpy()).all():
+            continue
+        future = timeline.loc[future_keys]
+        row = {
+            "scenario_id": event.scenario_id,
+            "timestamp": event.timestamp,
+            "ego_id": event.ego_id,
+            "lead_id": event.lead_id,
+        }
+        row.update({column: getattr(event, column) for column in context_columns})
+        for step, (_, future_row) in enumerate(future.iterrows(), start=1):
+            for column in target_columns:
+                row[f"future_{column}_{step}"] = future_row[column]
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
 if __name__ == "__main__":
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Loading V2X-Seq-TFD trajectories from {DATA_ROOT} ...")
@@ -244,6 +340,9 @@ if __name__ == "__main__":
         degraded_events = degraded_interactions.loc[events.index].copy()
         degraded_events["near_miss"] = events["near_miss"].to_numpy()
         degraded_events.to_csv(OUT_DIR / f"near_miss_events_{label}.csv", index=False)
+        windows = build_reaction_windows(interactions, degraded_events)
+        windows.to_csv(OUT_DIR / f"near_miss_windows_{label}.csv", index=False)
         print(f"  saved {label}: {len(degraded_events):,} events")
+        print(f"  saved {label} reaction windows: {len(windows):,}")
 
     print("Preprocessing complete.")

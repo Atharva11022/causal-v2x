@@ -9,6 +9,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 from causallearn.search.ConstraintBased.PC import pc
+from sklearn.model_selection import train_test_split
 
 
 DATA_DIR = Path("data")
@@ -37,6 +38,8 @@ STABILITY_THRESHOLD = 0.70
 SENSITIVITY_THRESHOLDS = [0.60, 0.70, 0.80]
 ALPHA_SENSITIVITY = [0.01, 0.05, 0.10, 0.20]
 SEED_BASES = [42, 142, 242]
+TRAIN_SPLIT_SEED = 42
+VALIDATION_FRACTION = 0.20
 
 
 def load_condition(label: str) -> pd.DataFrame:
@@ -49,6 +52,17 @@ def load_condition(label: str) -> pd.DataFrame:
     if missing:
         raise ValueError(f"{path} is missing columns: {sorted(missing)}")
     return frame[["scenario_id", *COOPERATIVE_COLS]].replace([np.inf, -np.inf], np.nan)
+
+
+def training_condition(frame: pd.DataFrame) -> pd.DataFrame:
+    """Keep causal discovery on the same scenario split used for training."""
+    scenario_ids = frame["scenario_id"].drop_duplicates().to_numpy()
+    train_ids, _ = train_test_split(
+        scenario_ids,
+        test_size=VALIDATION_FRACTION,
+        random_state=TRAIN_SPLIT_SEED,
+    )
+    return frame[frame["scenario_id"].isin(train_ids)].copy()
 
 
 def prepare_matrix(frame: pd.DataFrame, columns: list[str], seed: int) -> np.ndarray:
@@ -69,7 +83,7 @@ def prepare_matrix(frame: pd.DataFrame, columns: list[str], seed: int) -> np.nda
 def edge_set(
     data: np.ndarray, columns: list[str], alpha: float = 0.05
 ) -> set[tuple[str, str]]:
-    """Return canonical undirected adjacencies from the PC CPDAG."""
+    """Return only identifiable directed arrows from the PC CPDAG."""
     if len(data) < 20 or np.any(np.nanstd(data, axis=0) < 1e-10):
         return set()
 
@@ -77,10 +91,12 @@ def edge_set(
         graph = pc(data, alpha=alpha).G.graph
 
     edges = set()
-    for left in range(len(columns)):
-        for right in range(left + 1, len(columns)):
-            if graph[left, right] != 0 or graph[right, left] != 0:
-                edges.add(tuple(sorted((columns[left], columns[right]))))
+    for source in range(len(columns)):
+        for target in range(len(columns)):
+            if source == target:
+                continue
+            if graph[source, target] == -1 and graph[target, source] == 1:
+                edges.add((columns[source], columns[target]))
     return edges
 
 
@@ -93,29 +109,41 @@ def bootstrap_stability(
         for edge in edge_set(matrix, columns):
             counts[edge] = counts.get(edge, 0) + 1
 
+    records = [
+        {
+            "degradation": label,
+            "source": source,
+            "target": target,
+            "support_count": counts[(source, target)],
+            "n_bootstraps": N_BOOTSTRAPS,
+            "stability": counts[(source, target)] / N_BOOTSTRAPS,
+            "stable": counts[(source, target)] / N_BOOTSTRAPS >= STABILITY_THRESHOLD,
+        }
+        for source, target in sorted(counts)
+    ]
     return pd.DataFrame(
-        [
-            {
-                "degradation": label,
-                "source": source,
-                "target": target,
-                "support_count": counts[(source, target)],
-                "n_bootstraps": N_BOOTSTRAPS,
-                "stability": counts[(source, target)] / N_BOOTSTRAPS,
-                "stable": counts[(source, target)] / N_BOOTSTRAPS
-                >= STABILITY_THRESHOLD,
-            }
-            for source, target in sorted(counts)
-        ]
+        records,
+        columns=[
+            "degradation",
+            "source",
+            "target",
+            "support_count",
+            "n_bootstraps",
+            "stability",
+            "stable",
+        ],
     )
 
 
 def plot_graph(
     edges: pd.DataFrame, title: str, path: Path, node_columns: list[str]
 ) -> None:
-    graph = nx.Graph()
+    graph = nx.DiGraph()
     graph.add_nodes_from(node_columns)
-    graph.add_edges_from(edges[["source", "target"]].itertuples(index=False, name=None))
+    if not edges.empty:
+        graph.add_edges_from(
+            edges[["source", "target"]].itertuples(index=False, name=None)
+        )
     figure, axis = plt.subplots(figsize=(10, 6))
     position = nx.spring_layout(graph, seed=42)
     nx.draw_networkx(
@@ -126,6 +154,7 @@ def plot_graph(
         node_size=1500,
         font_size=8,
         edge_color="#356b8c",
+        arrows=True,
     )
     axis.set_title(title)
     axis.axis("off")
@@ -137,7 +166,7 @@ def plot_graph(
 if __name__ == "__main__":
     stability_tables = []
     for label in DEGRADATION_LABELS:
-        condition = load_condition(label)
+        condition = training_condition(load_condition(label))
         table = bootstrap_stability(condition, COOPERATIVE_COLS, label)
         stability_tables.append(table)
         stable_count = int(table["stable"].sum()) if not table.empty else 0
@@ -162,7 +191,7 @@ if __name__ == "__main__":
         COOPERATIVE_COLS,
     )
 
-    ego_condition = load_condition("clean")
+    ego_condition = training_condition(load_condition("clean"))
     ego_stability = bootstrap_stability(ego_condition, EGO_COLS, "clean")
     ego_stability.to_csv(OUT_DIR / "causal_edge_stability_ego_only.csv", index=False)
     ego_clean = ego_stability[ego_stability["stable"]].copy()
@@ -187,7 +216,11 @@ if __name__ == "__main__":
                 "view": "additional_cooperative_edges",
                 "stable_edges": len(
                     set(map(tuple, clean[["source", "target"]].to_numpy()))
-                    - set(map(tuple, ego_clean[["source", "target"]].to_numpy()))
+                    - (
+                        set(map(tuple, ego_clean[["source", "target"]].to_numpy()))
+                        if not ego_clean.empty
+                        else set()
+                    )
                 ),
             },
         ]
@@ -219,7 +252,7 @@ if __name__ == "__main__":
 
     seed_rows = []
     for label in ["clean", "dropout_20_delay_1"]:
-        condition = load_condition(label)
+        condition = training_condition(load_condition(label))
         for seed_base in SEED_BASES:
             table = bootstrap_stability(
                 condition, COOPERATIVE_COLS, label, seed_base=seed_base

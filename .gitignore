@@ -1,8 +1,29 @@
-# Environment
+# Python environments and caches
 venv/
+.venv/
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local raw and derived datasets
+data/*
+!data/.gitkeep
+
+# Local model and array artifacts
+outputs/*.pt
+outputs/*.pth
+outputs/*.ckpt
+outputs/*.npy
+outputs/*.npz
+outputs/*.pkl
+
+# Local experiment logs and temporary files
+*.log
 .DS_Store
+.env
+.env.*
 
 # Data (large / regenerable — do not commit)
 data/*.csv
@@ -13,10 +34,6 @@ data/*.htm
 data/v2x_seq_spd_example*
 data/v2x_seq_tfd_example*
 data/*_extracted/
-
-# Model weights & intermediate arrays (regenerable via scripts)
-outputs/*.pt
-outputs/*.npy
 
 # Keep small plots and summary CSVs as reproducible evidence.
 !outputs/*.png

@@ -1,8 +1,7 @@
 degradation,source,target,support_count,n_bootstraps,stability,stable
-clean,ego_accel,gap_distance,20,20,1.0,True
-clean,ego_accel,relative_speed,20,20,1.0,True
-clean,ego_speed,gap_distance,20,20,1.0,True
-clean,ego_speed,relative_speed,20,20,1.0,True
-clean,gap_distance,lead_speed,19,20,0.95,True
-clean,lead_accel,lead_speed,20,20,1.0,True
-clean,lead_speed,relative_speed,16,20,0.8,True
+clean,gap_distance,ego_accel,16,20,0.8,True
+clean,gap_distance,ego_speed,14,20,0.7,True
+clean,gap_distance,lead_speed,15,20,0.75,True
+clean,lead_accel,lead_speed,15,20,0.75,True
+clean,relative_speed,ego_accel,16,20,0.8,True
+clean,relative_speed,ego_speed,17,20,0.85,True

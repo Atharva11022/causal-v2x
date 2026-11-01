@@ -50,6 +50,26 @@ def evaluate_generator(generated, context, mask):
     return float(linked), float(unlinked), float(linked - unlinked)
 
 
+def joint_energy_distance(generated, real, max_samples=1000, seed=2024):
+    rng = np.random.default_rng(seed)
+    generated_sample = generated[
+        rng.choice(len(generated), size=min(max_samples, len(generated)), replace=False)
+    ]
+    real_sample = real[
+        rng.choice(len(real), size=min(max_samples, len(real)), replace=False)
+    ]
+    cross = np.linalg.norm(
+        generated_sample[:, None, :] - real_sample[None, :, :], axis=2
+    ).mean()
+    generated_within = np.linalg.norm(
+        generated_sample[:, None, :] - generated_sample[None, :, :], axis=2
+    ).mean()
+    real_within = np.linalg.norm(
+        real_sample[:, None, :] - real_sample[None, :, :], axis=2
+    ).mean()
+    return float(2.0 * cross - generated_within - real_within)
+
+
 if __name__ == "__main__":
     rows = []
     for label in EXPERIMENT_LABELS:
@@ -71,6 +91,8 @@ if __name__ == "__main__":
                     "distribution_mean_mae": float(
                         np.mean(np.abs(generated.mean(axis=0) - real.mean(axis=0)))
                     ),
+                    "joint_energy_distance": joint_energy_distance(generated, real),
+                    "hard_decel_rate": float(np.mean(generated[:, 0] < -3.0)),
                     "diversity_std": float(np.mean(generated.std(axis=0))),
                     "linked_corr": linked,
                     "unlinked_corr": unlinked,
@@ -91,6 +113,8 @@ if __name__ == "__main__":
                     "distribution_mean_mae": float(
                         np.mean(np.abs(robust.mean(axis=0) - real.mean(axis=0)))
                     ),
+                    "joint_energy_distance": joint_energy_distance(robust, real),
+                    "hard_decel_rate": float(np.mean(robust[:, 0] < -3.0)),
                     "diversity_std": float(np.mean(robust.std(axis=0))),
                     "linked_corr": linked,
                     "unlinked_corr": unlinked,
